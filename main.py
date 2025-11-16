@@ -176,7 +176,7 @@ Estruture em Markdown:
 ## Tarefa
 """
         with st.spinner("Gerando..."):
-            texto = chamar_ia(prompt, modelo="models/gemini-2.5-pro")
+            texto = chamar_ia(prompt, modelo="models/gemini-2.5-flash")
         st.markdown(texto)
         salvar_historico(st.session_state.email, "Plano de Aula", titulo_salvar or tema, texto)
         st.download_button("Exportar para PDF", data=gerar_pdf_bytes(titulo_salvar or tema, texto),
@@ -285,3 +285,4 @@ if st.session_state.email is None:
         tela_cadastro()
 else:
     app_principal()
+
