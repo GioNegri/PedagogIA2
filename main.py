@@ -196,3 +196,4 @@ elif menu == "Simulador de Debate":
     simular_debate()
 elif menu == "Histórico":
     historico()
+
