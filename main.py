@@ -20,12 +20,10 @@ import os
 # CONFIGURAÇÃO DA API
 # =============================
 try:
-    # 1. Tenta carregar do Streamlit Cloud
-    api_key = st.secrets["GEMINI_API_KEY"]
+    api_key = st.secrets["GEMINI_API_KEY"]  # Streamlit Cloud
     genai.configure(api_key=api_key)
 except:
-    # 2. Rodando local → usa config.py
-    from config import configurar_api
+    from config import configurar_api     # Rodando local
     configurar_api()
 
 # =============================
@@ -33,6 +31,37 @@ except:
 # =============================
 criar_tabelas()
 st.set_page_config(page_title="PedagogIA", page_icon="🎓", layout="wide")
+
+# =============================
+# LOGIN VIA STREAMLIT (OFICIAL)
+# =============================
+# Atenção: NÃO use st.experimental_user. Apenas st.user funciona em 2025.
+user = st.user
+
+if not user:
+    st.warning("Faça login para continuar.")
+    st.stop()
+
+email = user.get("email")
+nome = user.get("name", "Professor(a)")
+
+if not email:
+    st.error("""
+O Streamlit Cloud não forneceu seu email.
+
+Verifique em:
+**Settings → App access → User information → ‘Share basic user info’**
+""")
+    st.stop()
+
+# =============================
+# AUTORIZAÇÃO DE USUÁRIO
+# =============================
+if not email_autorizado(email):
+    st.error(f"O e-mail **{email}** não está autorizado a acessar o PedagogIA.")
+    st.stop()
+
+registrar_usuario(email, nome)
 
 # =============================
 # FUNÇÃO : CHAMADA IA
@@ -66,38 +95,9 @@ def gerar_pdf_bytes(titulo, conteudo):
     return data
 
 # =============================
-# LOGIN VIA STREAMLIT
-# =============================
-user = st.user   # Agora é oficial: retorna dados do login
-
-if not user:
-    st.warning("Faça login para continuar.")
-    st.stop()
-
-email = user.get("email")
-nome = user.get("name", "Professor(a)")
-
-if not email:
-    st.error("O email não foi retornado. Ative o Login via Email no Streamlit Cloud.")
-    st.stop()
-
-# =============================
-# VERIFICAÇÃO DE AUTORIZAÇÃO
-# =============================
-if not email_autorizado(email):
-    st.error(f"O e-mail **{email}** não está autorizado a acessar o PedagogIA.")
-    st.stop()
-
-# Registrar no banco
-registrar_usuario(email, nome)
-
-# =============================
 # SIDEBAR
 # =============================
 st.sidebar.write(f"Conectado como: **{email}**")
-
-if st.sidebar.button("Logout"):
-    st.switch_page("pages/logout.py")  # ou st.rerun()
 
 menu = st.sidebar.selectbox("Navegação", [
     "Gerar Plano de Aula",
