@@ -1,4 +1,5 @@
 import sqlite3
+import bcrypt
 
 # ============================================
 # CONEXÃO
@@ -13,16 +14,15 @@ def criar_tabelas():
     conn = conectar()
     cur = conn.cursor()
 
-    # Tabela de usuários
     cur.execute("""
         CREATE TABLE IF NOT EXISTS usuarios (
             email TEXT PRIMARY KEY,
             nome TEXT,
+            senha TEXT,
             autorizado INTEGER DEFAULT 0
         )
     """)
 
-    # Tabela de histórico
     cur.execute("""
         CREATE TABLE IF NOT EXISTS historico (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -41,14 +41,16 @@ def criar_tabelas():
 # ============================================
 # GERENCIAMENTO DE USUÁRIOS
 # ============================================
-def registrar_usuario(email, nome):
+def registrar_usuario(email, nome, senha):
     conn = conectar()
     cur = conn.cursor()
 
+    hash_senha = bcrypt.hashpw(senha.encode(), bcrypt.gensalt())
+
     cur.execute("""
-        INSERT OR IGNORE INTO usuarios (email, nome, autorizado)
-        VALUES (?, ?, 1)
-    """, (email, nome))
+        INSERT OR REPLACE INTO usuarios (email, nome, senha, autorizado)
+        VALUES (?, ?, ?, 1)
+    """, (email, nome, hash_senha))
 
     conn.commit()
     conn.close()
@@ -62,11 +64,25 @@ def email_autorizado(email):
     linha = cur.fetchone()
     conn.close()
 
-    # Se não existe → NÃO AUTORIZADO
+    if not linha:
+        return False
+    return linha[0] == 1
+
+
+def validar_login(email, senha):
+    conn = conectar()
+    cur = conn.cursor()
+
+    cur.execute("SELECT senha FROM usuarios WHERE email = ?", (email,))
+    linha = cur.fetchone()
+    conn.close()
+
     if not linha:
         return False
 
-    return linha[0] == 1
+    senha_hash = linha[0]
+
+    return bcrypt.checkpw(senha.encode(), senha_hash)
 
 # ============================================
 # HISTÓRICO
@@ -104,12 +120,7 @@ def obter_item_historico(id_):
     conn = conectar()
     cur = conn.cursor()
 
-    cur.execute("""
-        SELECT *
-        FROM historico
-        WHERE id = ?
-    """, (id_,))
-
+    cur.execute("SELECT * FROM historico WHERE id = ?", (id_,))
     dado = cur.fetchone()
     conn.close()
     return dado
@@ -120,6 +131,5 @@ def deletar_item_historico(id_):
     cur = conn.cursor()
 
     cur.execute("DELETE FROM historico WHERE id = ?", (id_,))
-
     conn.commit()
     conn.close()
