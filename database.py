@@ -18,7 +18,7 @@ def criar_tabelas():
         CREATE TABLE IF NOT EXISTS usuarios (
             email TEXT PRIMARY KEY,
             nome TEXT,
-            senha TEXT,
+            senha BLOB,
             autorizado INTEGER DEFAULT 0
         )
     """)
@@ -62,11 +62,9 @@ def email_autorizado(email):
 
     cur.execute("SELECT autorizado FROM usuarios WHERE email = ?", (email,))
     linha = cur.fetchone()
-    conn.close()
 
-    if not linha:
-        return False
-    return linha[0] == 1
+    conn.close()
+    return bool(linha and linha[0] == 1)
 
 
 def validar_login(email, senha):
@@ -81,7 +79,6 @@ def validar_login(email, senha):
         return False
 
     senha_hash = linha[0]
-
     return bcrypt.checkpw(senha.encode(), senha_hash)
 
 # ============================================
