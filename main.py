@@ -29,16 +29,19 @@ except:
 # ======================================
 # INICIALIZAÇÃO
 # ======================================
-criar_tabelas()
 st.set_page_config(page_title="PedagogIA", page_icon="🎓", layout="wide")
+criar_tabelas()
 
 if "email" not in st.session_state:
     st.session_state.email = None
 
+if "page" not in st.session_state:
+    st.session_state.page = "login"   # login/cadastro
+
 # ======================================
-# FUNÇÕES DE IA
+# FUNÇÃO IA
 # ======================================
-def chamar_ia(prompt, modelo='models/gemini-2.5-flash'):
+def chamar_ia(prompt, modelo="models/gemini-2.5-flash"):
     try:
         model = genai.GenerativeModel(modelo)
         resp = model.generate_content(prompt)
@@ -59,15 +62,17 @@ def gerar_pdf_bytes(titulo, conteudo):
     pdf.set_font("Arial", size=11)
     pdf.multi_cell(0, 6, conteudo)
 
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-    pdf.output(tmp.name)
-    with open(tmp.name, "rb") as f:
+    temp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+    pdf.output(temp.name)
+
+    with open(temp.name, "rb") as f:
         data = f.read()
-    os.unlink(tmp.name)
+
+    os.unlink(temp.name)
     return data
 
 # ======================================
-# LOGIN
+# TELAS
 # ======================================
 def tela_login():
     st.title("🔐 Login")
@@ -82,8 +87,6 @@ def tela_login():
         else:
             st.error("Email ou senha incorretos.")
 
-    st.info("Ainda não tem conta? Vá em *Criar Conta* na barra lateral.")
-
 
 def tela_cadastro():
     st.title("📝 Criar Conta")
@@ -94,20 +97,21 @@ def tela_cadastro():
 
     if st.button("Criar"):
         if not email_autorizado(email):
-            st.error("Este email NÃO está autorizado a criar conta.")
+            st.error("Este email NÃO está autorizado.")
         else:
             registrar_usuario(email, nome, senha)
-            st.success("Conta criada! Agora faça login.")
+            st.success("Conta criada. Faça login.")
             st.session_state.page = "login"
             st.rerun()
 
 # ======================================
-# INTERFACE PRINCIPAL (APÓS LOGIN)
+# APP PRINCIPAL
 # ======================================
 def app_principal():
     email = st.session_state.email
 
     st.sidebar.write(f"Conectado como **{email}**")
+
     if st.sidebar.button("Logout"):
         st.session_state.email = None
         st.rerun()
@@ -121,7 +125,6 @@ def app_principal():
 
     st.title("PedagogIA 🎓")
 
-    # -------- Funções --------
     if menu == "Gerar Plano de Aula":
         gerar_plano()
     elif menu == "Analisar Conteúdo":
@@ -131,34 +134,33 @@ def app_principal():
     elif menu == "Histórico":
         historico()
 
-
-# ----------------------------------------
-# FUNCIONALIDADES (igual antes do seu app)
-# ----------------------------------------
+# ======================================
+# FUNCIONALIDADES
+# ======================================
 def gerar_plano():
     st.header("🪄 Plano de Aula")
-    tema = st.text_input("Tema da Aula")
+    tema = st.text_input("Tema")
     serie = st.text_input("Série/Ano")
     duracao = st.number_input("Duração", 10, 200, 50)
 
     if st.button("Gerar"):
         prompt = f"""
-Crie um plano de aula completo.
+Crie um plano de aula completo e detalhado.
 Tema: {tema}
 Série: {serie}
 Duração: {duracao} minutos.
 """
-        texto = chamar_ia(prompt, "models/gemini-2.5-pro")
+        texto = chamar_ia(prompt)
         st.markdown(texto)
 
-        salvar_historico(st.session_state.email, "Plano de Aula", tema, texto)
+        salvar_historico(st.session_state.email, "Plano", tema, texto)
 
 def analisar_conteudo():
     st.header("🔎 Análise")
     texto = st.text_area("Texto")
 
     if st.button("Analisar"):
-        resp = chamar_ia(f"Analise: {texto}")
+        resp = chamar_ia(f"Analise o texto: {texto}")
         st.write(resp)
 
         salvar_historico(st.session_state.email, "Análise", "Análise", resp)
@@ -168,7 +170,7 @@ def simular_debate():
     tema = st.text_input("Tema")
 
     if st.button("Gerar Debate"):
-        resp = chamar_ia(f"Debate sobre: {tema}")
+        resp = chamar_ia(f"Simule um debate sobre o tema: {tema}")
         st.write(resp)
 
         salvar_historico(st.session_state.email, "Debate", tema, resp)
@@ -179,14 +181,26 @@ def historico():
 
     for id_, tipo, titulo, created in itens:
         st.write(f"**{titulo}** — {tipo} ({created})")
-        if st.button("Abrir", key=f"abrir_{id_}"):
-            item = obter_item_historico(id_)
-            st.write(item[4])
 
-# ============================================
-# ROTEAMENTO
-# ============================================
+        if st.button("Abrir", key=f"open_{id_}"):
+            item = obter_item_historico(id_)
+            st.markdown(item[4])
+
+# ======================================
+# MENU LATERAL (quando não logado)
+# ======================================
 if st.session_state.email is None:
-    tela_login()
+    st.sidebar.title("Acesso")
+
+    if st.sidebar.button("Login"):
+        st.session_state.page = "login"
+
+    if st.sidebar.button("Criar Conta"):
+        st.session_state.page = "cadastro"
+
+    if st.session_state.page == "login":
+        tela_login()
+    else:
+        tela_cadastro()
 else:
     app_principal()
