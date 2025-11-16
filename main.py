@@ -1,206 +1,179 @@
-import streamlit as st
-import google.generativeai as genai
+import sqlite3
+from datetime import datetime
+import bcrypt
+from typing import Optional, List, Tuple
 
-from database import (
-    criar_tabelas,
-    email_autorizado,
-    registrar_usuario,
-    validar_login,
-    salvar_historico,
-    listar_historico_usuario,
-    obter_item_historico,
-    deletar_item_historico
-)
+DB_PATH = "pedagogia.db"
 
-from fpdf import FPDF
-import tempfile
-import os
+def conectar():
+    return sqlite3.connect(DB_PATH, check_same_thread=False)
 
-# ======================================
-# CONFIG GEMINI
-# ======================================
-try:
-    api_key = st.secrets["GEMINI_API_KEY"]
-    genai.configure(api_key=api_key)
-except:
-    from config import configurar_api
-    configurar_api()
+def criar_tabelas():
+    """Cria tabelas essenciais e adiciona emails autorizados iniciais."""
+    conn = conectar()
+    c = conn.cursor()
 
-# ======================================
-# INICIALIZAÇÃO
-# ======================================
-st.set_page_config(page_title="PedagogIA", page_icon="🎓", layout="wide")
-criar_tabelas()
+    # tabela de emails autorizados
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS emails_autorizados (
+        email TEXT PRIMARY KEY
+    )
+    """)
 
-if "email" not in st.session_state:
-    st.session_state.email = None
+    # tabela de usuários cadastrados
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS usuarios (
+        email TEXT PRIMARY KEY,
+        nome TEXT,
+        senha_hash BLOB NOT NULL
+    )
+    """)
 
-if "page" not in st.session_state:
-    st.session_state.page = "login"   # login/cadastro
+    # histórico de conteúdos gerados
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS historico (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT,
+        tipo TEXT,
+        titulo TEXT,
+        conteudo TEXT,
+        created_at TEXT,
+        FOREIGN KEY(email) REFERENCES usuarios(email)
+    )
+    """)
 
-# ======================================
-# FUNÇÃO IA
-# ======================================
-def chamar_ia(prompt, modelo="models/gemini-2.5-flash"):
+    # --- seeds: adicione aqui emails que podem criar conta ---
+    # Ex.: gn@gmail.com e giovannenegri@gmail.com (você pode remover depois)
+    seeds = [
+        ("gn@gmail.com",),
+        ("giovannenegri@gmail.com",)
+    ]
+    c.executemany("INSERT OR IGNORE INTO emails_autorizados (email) VALUES (?)", seeds)
+
+    conn.commit()
+    conn.close()
+
+# ---------- Emails autorizados ----------
+def listar_emails_autorizados() -> List[Tuple[str]]:
+    conn = conectar()
+    c = conn.cursor()
+    c.execute("SELECT email FROM emails_autorizados ORDER BY email")
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+def adicionar_email_autorizado(email: str) -> bool:
+    conn = conectar()
+    c = conn.cursor()
     try:
-        model = genai.GenerativeModel(modelo)
-        resp = model.generate_content(prompt)
-        return resp.text
-    except Exception as e:
-        return f"Erro: {e}"
+        c.execute("INSERT INTO emails_autorizados (email) VALUES (?)", (email,))
+        conn.commit()
+        return True
+    except Exception:
+        return False
+    finally:
+        conn.close()
 
-# ======================================
-# PDF
-# ======================================
-def gerar_pdf_bytes(titulo, conteudo):
-    pdf = FPDF()
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_page()
-    pdf.set_font("Arial", "B", 14)
-    pdf.multi_cell(0, 8, titulo)
-    pdf.ln(4)
-    pdf.set_font("Arial", size=11)
-    pdf.multi_cell(0, 6, conteudo)
+def remover_email_autorizado(email: str) -> None:
+    conn = conectar()
+    c = conn.cursor()
+    c.execute("DELETE FROM emails_autorizados WHERE email = ?", (email,))
+    conn.commit()
+    conn.close()
 
-    temp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-    pdf.output(temp.name)
+def email_autorizado(email: str) -> bool:
+    """Retorna True se o email está na lista autorizada (permitido criar conta)."""
+    conn = conectar()
+    c = conn.cursor()
+    c.execute("SELECT 1 FROM emails_autorizados WHERE email = ?", (email,))
+    row = c.fetchone()
+    conn.close()
+    return row is not None
 
-    with open(temp.name, "rb") as f:
-        data = f.read()
+# ---------- Usuários ----------
+def registrar_usuario(email: str, nome: str, senha_plain: str) -> Tuple[bool, str]:
+    """Cria usuário (apenas se email estiver autorizado)."""
+    if not email_autorizado(email):
+        return False, "Email não autorizado para criação de conta."
 
-    os.unlink(temp.name)
-    return data
+    senha_hash = bcrypt.hashpw(senha_plain.encode("utf-8"), bcrypt.gensalt())
+    conn = conectar()
+    c = conn.cursor()
+    try:
+        c.execute("INSERT INTO usuarios (email, nome, senha_hash) VALUES (?, ?, ?)",
+                  (email, nome, senha_hash))
+        conn.commit()
+        return True, "Usuário registrado."
+    except sqlite3.IntegrityError:
+        return False, "Usuário já existe."
+    finally:
+        conn.close()
 
-# ======================================
-# TELAS
-# ======================================
-def tela_login():
-    st.title("🔐 Login")
+def validar_login(email: str, senha_plain: str) -> bool:
+    """Valida credenciais (comparing bcrypt hashes)."""
+    conn = conectar()
+    c = conn.cursor()
+    c.execute("SELECT senha_hash FROM usuarios WHERE email = ?", (email,))
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        return False
+    senha_hash = row[0]  # bytes
+    try:
+        return bcrypt.checkpw(senha_plain.encode("utf-8"), senha_hash)
+    except Exception:
+        return False
 
-    email = st.text_input("Email")
-    senha = st.text_input("Senha", type="password")
+def remover_usuario(email: str) -> None:
+    conn = conectar()
+    c = conn.cursor()
+    c.execute("DELETE FROM usuarios WHERE email = ?", (email,))
+    conn.commit()
+    conn.close()
 
-    if st.button("Entrar"):
-        if validar_login(email, senha):
-            st.session_state.email = email
-            st.rerun()
-        else:
-            st.error("Email ou senha incorretos.")
+# ---------- Histórico ----------
+def salvar_historico(email: str, tipo: str, titulo: str, conteudo: str) -> None:
+    conn = conectar()
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO historico (email, tipo, titulo, conteudo, created_at)
+        VALUES (?, ?, ?, ?, ?)
+    """, (email, tipo, titulo, conteudo, datetime.utcnow().isoformat()))
+    conn.commit()
+    conn.close()
 
+def listar_historico_usuario(email: str):
+    conn = conectar()
+    c = conn.cursor()
+    c.execute("""
+        SELECT id, tipo, titulo, created_at
+        FROM historico
+        WHERE email = ?
+        ORDER BY id DESC
+    """, (email,))
+    rows = c.fetchall()
+    conn.close()
+    return rows
 
-def tela_cadastro():
-    st.title("📝 Criar Conta")
+def listar_historico_todos():
+    conn = conectar()
+    c = conn.cursor()
+    c.execute("SELECT id, email, tipo, titulo, created_at FROM historico ORDER BY id DESC")
+    rows = c.fetchall()
+    conn.close()
+    return rows
 
-    email = st.text_input("Email autorizado")
-    nome = st.text_input("Nome")
-    senha = st.text_input("Senha", type="password")
+def obter_item_historico(item_id: int):
+    conn = conectar()
+    c = conn.cursor()
+    c.execute("SELECT id, email, tipo, titulo, conteudo, created_at FROM historico WHERE id = ?", (item_id,))
+    row = c.fetchone()
+    conn.close()
+    return row
 
-    if st.button("Criar"):
-        if not email_autorizado(email):
-            st.error("Este email NÃO está autorizado.")
-        else:
-            registrar_usuario(email, nome, senha)
-            st.success("Conta criada. Faça login.")
-            st.session_state.page = "login"
-            st.rerun()
-
-# ======================================
-# APP PRINCIPAL
-# ======================================
-def app_principal():
-    email = st.session_state.email
-
-    st.sidebar.write(f"Conectado como **{email}**")
-
-    if st.sidebar.button("Logout"):
-        st.session_state.email = None
-        st.rerun()
-
-    menu = st.sidebar.selectbox("Menu", [
-        "Gerar Plano de Aula",
-        "Analisar Conteúdo",
-        "Simulador de Debate",
-        "Histórico"
-    ])
-
-    st.title("PedagogIA 🎓")
-
-    if menu == "Gerar Plano de Aula":
-        gerar_plano()
-    elif menu == "Analisar Conteúdo":
-        analisar_conteudo()
-    elif menu == "Simulador de Debate":
-        simular_debate()
-    elif menu == "Histórico":
-        historico()
-
-# ======================================
-# FUNCIONALIDADES
-# ======================================
-def gerar_plano():
-    st.header("🪄 Plano de Aula")
-    tema = st.text_input("Tema")
-    serie = st.text_input("Série/Ano")
-    duracao = st.number_input("Duração", 10, 200, 50)
-
-    if st.button("Gerar"):
-        prompt = f"""
-Crie um plano de aula completo e detalhado.
-Tema: {tema}
-Série: {serie}
-Duração: {duracao} minutos.
-"""
-        texto = chamar_ia(prompt)
-        st.markdown(texto)
-
-        salvar_historico(st.session_state.email, "Plano", tema, texto)
-
-def analisar_conteudo():
-    st.header("🔎 Análise")
-    texto = st.text_area("Texto")
-
-    if st.button("Analisar"):
-        resp = chamar_ia(f"Analise o texto: {texto}")
-        st.write(resp)
-
-        salvar_historico(st.session_state.email, "Análise", "Análise", resp)
-
-def simular_debate():
-    st.header("🏛 Debate")
-    tema = st.text_input("Tema")
-
-    if st.button("Gerar Debate"):
-        resp = chamar_ia(f"Simule um debate sobre o tema: {tema}")
-        st.write(resp)
-
-        salvar_historico(st.session_state.email, "Debate", tema, resp)
-
-def historico():
-    st.header("📚 Histórico")
-    itens = listar_historico_usuario(st.session_state.email)
-
-    for id_, tipo, titulo, created in itens:
-        st.write(f"**{titulo}** — {tipo} ({created})")
-
-        if st.button("Abrir", key=f"open_{id_}"):
-            item = obter_item_historico(id_)
-            st.markdown(item[4])
-
-# ======================================
-# MENU LATERAL (quando não logado)
-# ======================================
-if st.session_state.email is None:
-    st.sidebar.title("Acesso")
-
-    if st.sidebar.button("Login"):
-        st.session_state.page = "login"
-
-    if st.sidebar.button("Criar Conta"):
-        st.session_state.page = "cadastro"
-
-    if st.session_state.page == "login":
-        tela_login()
-    else:
-        tela_cadastro()
-else:
-    app_principal()
+def deletar_item_historico(item_id: int) -> None:
+    conn = conectar()
+    c = conn.cursor()
+    c.execute("DELETE FROM historico WHERE id = ?", (item_id,))
+    conn.commit()
+    conn.close()
