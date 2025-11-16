@@ -1,0 +1,5 @@
+streamlit
+google-generative-ai
+fpdf
+sqlite3
+bcrypt
