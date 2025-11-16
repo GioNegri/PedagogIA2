@@ -1,102 +1,125 @@
-# database.py
 import sqlite3
-from datetime import datetime
 
-DB_PATH = "pedagogia.db"
-
+# ============================================
+# CONEXÃO
+# ============================================
 def conectar():
-    return sqlite3.connect(DB_PATH, check_same_thread=False)
+    return sqlite3.connect("dados.db", check_same_thread=False)
 
+# ============================================
+# CRIAÇÃO DE TABELAS
+# ============================================
 def criar_tabelas():
     conn = conectar()
-    c = conn.cursor()
+    cur = conn.cursor()
 
-    # Tabela de usuários (dados básicos — sem senha)
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS usuarios (
-        email TEXT PRIMARY KEY,
-        nome TEXT
-    )
+    # Tabela de usuários
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS usuarios (
+            email TEXT PRIMARY KEY,
+            nome TEXT,
+            autorizado INTEGER DEFAULT 0
+        )
     """)
 
     # Tabela de histórico
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS historico (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        email TEXT,
-        tipo TEXT,
-        titulo TEXT,
-        conteudo TEXT,
-        created_at TEXT
-    )
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS historico (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT,
+            tipo TEXT,
+            titulo TEXT,
+            conteudo TEXT,
+            created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (email) REFERENCES usuarios(email)
+        )
     """)
 
-    # Lista de e-mails permitidos para entrar no sistema
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS emails_autorizados (
-        email TEXT PRIMARY KEY
-    )
-    """)
+    conn.commit()
+    conn.close()
 
-    # Seu e-mail como autorizado
-    c.execute("""
-    INSERT OR IGNORE INTO emails_autorizados (email) VALUES (?)
-    """, ("giovannenegri@gmail.com",))
+# ============================================
+# GERENCIAMENTO DE USUÁRIOS
+# ============================================
+def registrar_usuario(email, nome):
+    conn = conectar()
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT OR IGNORE INTO usuarios (email, nome, autorizado)
+        VALUES (?, ?, 1)
+    """, (email, nome))
 
     conn.commit()
     conn.close()
 
 
-# ---------- Emails autorizados ----------
 def email_autorizado(email):
     conn = conectar()
-    c = conn.cursor()
-    c.execute("SELECT email FROM emails_autorizados WHERE email = ?", (email,))
-    row = c.fetchone()
-    conn.close()
-    return row is not None
+    cur = conn.cursor()
 
-
-# ---------- Usuários ----------
-def registrar_usuario(email, nome):
-    """
-    Registra o usuário apenas com email e nome.
-    """
-    conn = conectar()
-    c = conn.cursor()
-    c.execute("INSERT OR IGNORE INTO usuarios (email, nome) VALUES (?, ?)", (email, nome))
-    conn.commit()
+    cur.execute("SELECT autorizado FROM usuarios WHERE email = ?", (email,))
+    linha = cur.fetchone()
     conn.close()
 
+    # Se não existe → NÃO AUTORIZADO
+    if not linha:
+        return False
 
-# ---------- Histórico ----------
+    return linha[0] == 1
+
+# ============================================
+# HISTÓRICO
+# ============================================
 def salvar_historico(email, tipo, titulo, conteudo):
     conn = conectar()
-    c = conn.cursor()
-    c.execute("INSERT INTO historico (email, tipo, titulo, conteudo, created_at) VALUES (?, ?, ?, ?, ?)",
-              (email, tipo, titulo, conteudo, datetime.utcnow().isoformat()))
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO historico (email, tipo, titulo, conteudo)
+        VALUES (?, ?, ?, ?)
+    """, (email, tipo, titulo, conteudo))
+
     conn.commit()
     conn.close()
+
 
 def listar_historico_usuario(email):
     conn = conectar()
-    c = conn.cursor()
-    c.execute("SELECT id, tipo, titulo, created_at FROM historico WHERE email = ? ORDER BY created_at DESC", (email,))
-    rows = c.fetchall()
-    conn.close()
-    return rows
+    cur = conn.cursor()
 
-def obter_item_historico(item_id):
-    conn = conectar()
-    c = conn.cursor()
-    c.execute("SELECT id, email, tipo, titulo, conteudo, created_at FROM historico WHERE id = ?", (item_id,))
-    row = c.fetchone()
-    conn.close()
-    return row
+    cur.execute("""
+        SELECT id, tipo, titulo, created
+        FROM historico
+        WHERE email = ?
+        ORDER BY id DESC
+    """, (email,))
 
-def deletar_item_historico(item_id):
+    dados = cur.fetchall()
+    conn.close()
+    return dados
+
+
+def obter_item_historico(id_):
     conn = conectar()
-    c = conn.cursor()
-    c.execute("DELETE FROM historico WHERE id = ?", (item_id,))
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT *
+        FROM historico
+        WHERE id = ?
+    """, (id_,))
+
+    dado = cur.fetchone()
+    conn.close()
+    return dado
+
+
+def deletar_item_historico(id_):
+    conn = conectar()
+    cur = conn.cursor()
+
+    cur.execute("DELETE FROM historico WHERE id = ?", (id_,))
+
     conn.commit()
     conn.close()
