@@ -1,132 +1,179 @@
 import sqlite3
+from datetime import datetime
 import bcrypt
+from typing import Optional, List, Tuple
 
-# ============================================
-# CONEXÃO
-# ============================================
+DB_PATH = "pedagogia.db"
+
 def conectar():
-    return sqlite3.connect("dados.db", check_same_thread=False)
+    return sqlite3.connect(DB_PATH, check_same_thread=False)
 
-# ============================================
-# CRIAÇÃO DE TABELAS
-# ============================================
 def criar_tabelas():
+    """Cria tabelas essenciais e adiciona emails autorizados iniciais."""
     conn = conectar()
-    cur = conn.cursor()
+    c = conn.cursor()
 
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS usuarios (
-            email TEXT PRIMARY KEY,
-            nome TEXT,
-            senha BLOB,
-            autorizado INTEGER DEFAULT 0
-        )
+    # tabela de emails autorizados
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS emails_autorizados (
+        email TEXT PRIMARY KEY
+    )
     """)
 
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS historico (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            email TEXT,
-            tipo TEXT,
-            titulo TEXT,
-            conteudo TEXT,
-            created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (email) REFERENCES usuarios(email)
-        )
+    # tabela de usuários cadastrados
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS usuarios (
+        email TEXT PRIMARY KEY,
+        nome TEXT,
+        senha_hash BLOB NOT NULL
+    )
     """)
+
+    # histórico de conteúdos gerados
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS historico (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT,
+        tipo TEXT,
+        titulo TEXT,
+        conteudo TEXT,
+        created_at TEXT,
+        FOREIGN KEY(email) REFERENCES usuarios(email)
+    )
+    """)
+
+    # --- seeds: adicione aqui emails que podem criar conta ---
+    # Ex.: gn@gmail.com e giovannenegri@gmail.com (você pode remover depois)
+    seeds = [
+        ("gn@gmail.com",),
+        ("giovannenegri@gmail.com",)
+    ]
+    c.executemany("INSERT OR IGNORE INTO emails_autorizados (email) VALUES (?)", seeds)
 
     conn.commit()
     conn.close()
 
-# ============================================
-# GERENCIAMENTO DE USUÁRIOS
-# ============================================
-def registrar_usuario(email, nome, senha):
+# ---------- Emails autorizados ----------
+def listar_emails_autorizados() -> List[Tuple[str]]:
     conn = conectar()
-    cur = conn.cursor()
+    c = conn.cursor()
+    c.execute("SELECT email FROM emails_autorizados ORDER BY email")
+    rows = c.fetchall()
+    conn.close()
+    return rows
 
-    hash_senha = bcrypt.hashpw(senha.encode(), bcrypt.gensalt())
+def adicionar_email_autorizado(email: str) -> bool:
+    conn = conectar()
+    c = conn.cursor()
+    try:
+        c.execute("INSERT INTO emails_autorizados (email) VALUES (?)", (email,))
+        conn.commit()
+        return True
+    except Exception:
+        return False
+    finally:
+        conn.close()
 
-    cur.execute("""
-        INSERT OR REPLACE INTO usuarios (email, nome, senha, autorizado)
-        VALUES (?, ?, ?, 1)
-    """, (email, nome, hash_senha))
-
+def remover_email_autorizado(email: str) -> None:
+    conn = conectar()
+    c = conn.cursor()
+    c.execute("DELETE FROM emails_autorizados WHERE email = ?", (email,))
     conn.commit()
     conn.close()
 
-
-def email_autorizado(email):
+def email_autorizado(email: str) -> bool:
+    """Retorna True se o email está na lista autorizada (permitido criar conta)."""
     conn = conectar()
-    cur = conn.cursor()
-
-    cur.execute("SELECT autorizado FROM usuarios WHERE email = ?", (email,))
-    linha = cur.fetchone()
-
+    c = conn.cursor()
+    c.execute("SELECT 1 FROM emails_autorizados WHERE email = ?", (email,))
+    row = c.fetchone()
     conn.close()
-    return bool(linha and linha[0] == 1)
+    return row is not None
 
+# ---------- Usuários ----------
+def registrar_usuario(email: str, nome: str, senha_plain: str) -> Tuple[bool, str]:
+    """Cria usuário (apenas se email estiver autorizado)."""
+    if not email_autorizado(email):
+        return False, "Email não autorizado para criação de conta."
 
-def validar_login(email, senha):
+    senha_hash = bcrypt.hashpw(senha_plain.encode("utf-8"), bcrypt.gensalt())
     conn = conectar()
-    cur = conn.cursor()
+    c = conn.cursor()
+    try:
+        c.execute("INSERT INTO usuarios (email, nome, senha_hash) VALUES (?, ?, ?)",
+                  (email, nome, senha_hash))
+        conn.commit()
+        return True, "Usuário registrado."
+    except sqlite3.IntegrityError:
+        return False, "Usuário já existe."
+    finally:
+        conn.close()
 
-    cur.execute("SELECT senha FROM usuarios WHERE email = ?", (email,))
-    linha = cur.fetchone()
+def validar_login(email: str, senha_plain: str) -> bool:
+    """Valida credenciais (comparing bcrypt hashes)."""
+    conn = conectar()
+    c = conn.cursor()
+    c.execute("SELECT senha_hash FROM usuarios WHERE email = ?", (email,))
+    row = c.fetchone()
     conn.close()
-
-    if not linha:
+    if not row:
+        return False
+    senha_hash = row[0]  # bytes
+    try:
+        return bcrypt.checkpw(senha_plain.encode("utf-8"), senha_hash)
+    except Exception:
         return False
 
-    senha_hash = linha[0]
-    return bcrypt.checkpw(senha.encode(), senha_hash)
-
-# ============================================
-# HISTÓRICO
-# ============================================
-def salvar_historico(email, tipo, titulo, conteudo):
+def remover_usuario(email: str) -> None:
     conn = conectar()
-    cur = conn.cursor()
-
-    cur.execute("""
-        INSERT INTO historico (email, tipo, titulo, conteudo)
-        VALUES (?, ?, ?, ?)
-    """, (email, tipo, titulo, conteudo))
-
+    c = conn.cursor()
+    c.execute("DELETE FROM usuarios WHERE email = ?", (email,))
     conn.commit()
     conn.close()
 
-
-def listar_historico_usuario(email):
+# ---------- Histórico ----------
+def salvar_historico(email: str, tipo: str, titulo: str, conteudo: str) -> None:
     conn = conectar()
-    cur = conn.cursor()
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO historico (email, tipo, titulo, conteudo, created_at)
+        VALUES (?, ?, ?, ?, ?)
+    """, (email, tipo, titulo, conteudo, datetime.utcnow().isoformat()))
+    conn.commit()
+    conn.close()
 
-    cur.execute("""
-        SELECT id, tipo, titulo, created
+def listar_historico_usuario(email: str):
+    conn = conectar()
+    c = conn.cursor()
+    c.execute("""
+        SELECT id, tipo, titulo, created_at
         FROM historico
         WHERE email = ?
         ORDER BY id DESC
     """, (email,))
-
-    dados = cur.fetchall()
+    rows = c.fetchall()
     conn.close()
-    return dados
+    return rows
 
-
-def obter_item_historico(id_):
+def listar_historico_todos():
     conn = conectar()
-    cur = conn.cursor()
-
-    cur.execute("SELECT * FROM historico WHERE id = ?", (id_,))
-    dado = cur.fetchone()
+    c = conn.cursor()
+    c.execute("SELECT id, email, tipo, titulo, created_at FROM historico ORDER BY id DESC")
+    rows = c.fetchall()
     conn.close()
-    return dado
+    return rows
 
-
-def deletar_item_historico(id_):
+def obter_item_historico(item_id: int):
     conn = conectar()
-    cur = conn.cursor()
+    c = conn.cursor()
+    c.execute("SELECT id, email, tipo, titulo, conteudo, created_at FROM historico WHERE id = ?", (item_id,))
+    row = c.fetchone()
+    conn.close()
+    return row
 
-    cur.execute("DELETE FROM historico WHERE id = ?", (id_,))
+def deletar_item_historico(item_id: int) -> None:
+    conn = conectar()
+    c = conn.cursor()
+    c.execute("DELETE FROM historico WHERE id = ?", (item_id,))
     conn.commit()
     conn.close()
