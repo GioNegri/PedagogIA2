@@ -1,7 +1,7 @@
 # main.py
 import streamlit as st
-from config import configurar_api
 import google.generativeai as genai
+
 from database import (
     criar_tabelas,
     email_autorizado,
@@ -11,25 +11,32 @@ from database import (
     obter_item_historico,
     deletar_item_historico
 )
+
 from fpdf import FPDF
 import tempfile
 import os
 
-# 1) Tenta carregar a API KEY do Streamlit Cloud
+# =============================
+# CONFIGURAÇÃO DA API
+# =============================
 try:
+    # 1. Tenta carregar do Streamlit Cloud
     api_key = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=api_key)
-# 2) Se estiver rodando localmente, usa o config.py
 except:
+    # 2. Rodando local → usa config.py
     from config import configurar_api
     configurar_api()
 
-# Inicialização
+# =============================
+# INICIALIZAÇÃO DO APP
+# =============================
 criar_tabelas()
-configurar_api()
 st.set_page_config(page_title="PedagogIA", page_icon="🎓", layout="wide")
 
-# Função IA
+# =============================
+# FUNÇÃO : CHAMADA IA
+# =============================
 def chamar_ia(prompt, modelo='models/gemini-2.5-flash'):
     try:
         model = genai.GenerativeModel(modelo)
@@ -38,7 +45,9 @@ def chamar_ia(prompt, modelo='models/gemini-2.5-flash'):
     except Exception as e:
         return f"Erro ao chamar API: {e}"
 
-# PDF
+# =============================
+# FUNÇÃO : PDF
+# =============================
 def gerar_pdf_bytes(titulo, conteudo):
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
@@ -56,32 +65,39 @@ def gerar_pdf_bytes(titulo, conteudo):
     os.unlink(tmp.name)
     return data
 
-# ---------- LOGIN VIA STREAMLIT ----------
-if "user" not in st.session_state:
-    st.session_state.user = st.experimental_user  # dados do Google/GitHub
+# =============================
+# LOGIN VIA STREAMLIT
+# =============================
+user = st.user   # Agora é oficial: retorna dados do login
 
-user = st.session_state.user
-
-if user is None:
+if not user:
     st.warning("Faça login para continuar.")
     st.stop()
 
-email = user["email"]
+email = user.get("email")
 nome = user.get("name", "Professor(a)")
 
-# Verificar autorização
+if not email:
+    st.error("O email não foi retornado. Ative o Login via Email no Streamlit Cloud.")
+    st.stop()
+
+# =============================
+# VERIFICAÇÃO DE AUTORIZAÇÃO
+# =============================
 if not email_autorizado(email):
     st.error(f"O e-mail **{email}** não está autorizado a acessar o PedagogIA.")
     st.stop()
 
-# Registrar usuário no banco
+# Registrar no banco
 registrar_usuario(email, nome)
 
-# Sidebar
+# =============================
+# SIDEBAR
+# =============================
 st.sidebar.write(f"Conectado como: **{email}**")
+
 if st.sidebar.button("Logout"):
-    st.session_state.user = None
-    st.rerun()
+    st.switch_page("pages/logout.py")  # ou st.rerun()
 
 menu = st.sidebar.selectbox("Navegação", [
     "Gerar Plano de Aula",
@@ -92,7 +108,9 @@ menu = st.sidebar.selectbox("Navegação", [
 
 st.title("PedagogIA")
 
-# ---------- Funções principais ----------
+# =============================
+# FUNÇÕES PRINCIPAIS
+# =============================
 def gerar_plano():
     st.header("🪄 Plano de Aula")
     tema = st.text_input("Tema da Aula")
@@ -119,6 +137,7 @@ Estruture em Markdown:
         st.markdown(texto)
 
         salvar_historico(email, "Plano de Aula", titulo_salvar, texto)
+
         st.download_button("Exportar para PDF",
                            data=gerar_pdf_bytes(titulo_salvar, texto),
                            file_name="plano.pdf",
@@ -134,7 +153,9 @@ def analisar_conteudo():
         prompt = f"{tipo}: {texto}"
         resposta = chamar_ia(prompt)
         st.write(resposta)
+
         salvar_historico(email, "Análise", titulo_salvar, resposta)
+
         st.download_button("Exportar PDF",
                            gerar_pdf_bytes(titulo_salvar, resposta),
                            file_name="analise.pdf")
@@ -155,8 +176,11 @@ Lado B: {lado_b}
 """
         resp = chamar_ia(prompt)
         st.markdown(resp)
+
         salvar_historico(email, "Debate", titulo_salvar, resp)
-        st.download_button("PDF", gerar_pdf_bytes(titulo_salvar, resp),
+
+        st.download_button("PDF",
+                           gerar_pdf_bytes(titulo_salvar, resp),
                            file_name="debate.pdf")
 
 def historico():
@@ -168,7 +192,7 @@ def historico():
         return
 
     for id_, tipo, titulo, created in itens:
-        cols = st.columns([6,2,2])
+        cols = st.columns([6, 2, 2])
         cols[0].markdown(f"**{titulo}** — _{tipo}_ ({created[:10]})")
 
         if cols[1].button("Abrir", key=f"open_{id_}"):
@@ -186,8 +210,9 @@ def historico():
             st.success("Excluído.")
             st.rerun()
 
-
-# ---------- Roteamento ----------
+# =============================
+# ROTAS
+# =============================
 if menu == "Gerar Plano de Aula":
     gerar_plano()
 elif menu == "Analisar Conteúdo":
@@ -196,4 +221,3 @@ elif menu == "Simulador de Debate":
     simular_debate()
 elif menu == "Histórico":
     historico()
-
