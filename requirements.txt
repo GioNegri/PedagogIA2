@@ -1,6 +1,5 @@
 streamlit
 google-generativeai
 fpdf
-sqlite3
-
 bcrypt
+
